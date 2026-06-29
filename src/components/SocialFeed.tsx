@@ -207,12 +207,12 @@ export default function SocialFeed({
                       <h3 className="text-xs font-black text-white leading-tight group-hover:text-brand transition-colors">
                         {issue.title}
                       </h3>
-                      {issue.isSpam && (
-                        <span className="text-[8px] px-1 py-0.2 bg-red-950/40 border border-red-500/30 rounded text-red-400 font-bold tracking-tight uppercase animate-pulse">
-                          ⚠️ Sus
-                        </span>
-                      )}
                     </div>
+                    {issue.isSpam && (
+                      <div className="mt-1 flex items-center gap-1.5 px-2 py-1 bg-red-950/40 border border-red-500/30 rounded text-red-400 text-[8.5px] font-mono uppercase font-semibold w-fit select-none">
+                        <span>⚠️ AI flagged this as potentially misleading</span>
+                      </div>
+                    )}
                     <p className="text-[10px] text-gray-400 leading-normal line-clamp-2 mt-1">
                       {issue.description}
                     </p>

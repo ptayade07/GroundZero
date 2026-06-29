@@ -708,6 +708,176 @@ async function startServer() {
     });
   });
 
+  // Analyze report description with Gemini (or fallback)
+  app.post("/api/gemini/analyze-text", async (req, res) => {
+    try {
+      const { description } = req.body;
+      if (!description) {
+        return res.status(400).json({ error: "Missing description" });
+      }
+
+      const categories: Category[] = [
+        "Civic Issue", "Pothole", "Flooding", "Power Cut", "Garbage", "Corruption",
+        "Government Failure", "Protest / Rally", "Local Drama", "Argument / Dispute",
+        "Harassment", "Breaking News", "Village Problem", "Weather", "War / Conflict", "Other"
+      ];
+
+      // Local heuristic fallback
+      const textLower = description.toLowerCase();
+      let fallbackCategory: Category = "Other";
+      let fallbackTitle = description.substring(0, 35) + "...";
+      let isSpam = false;
+      let spamReasoning = "";
+
+      if (textLower.includes("pothole") || textLower.includes("crater") || textLower.includes("road")) {
+        fallbackCategory = "Pothole";
+        fallbackTitle = "Main Street Pothole Crater! 🕳️";
+      } else if (textLower.includes("flood") || textLower.includes("water") || textLower.includes("rain") || textLower.includes("waterlogging") || textLower.includes("storm")) {
+        fallbackCategory = "Flooding";
+        fallbackTitle = "Waterlogging Chaos! 🌊";
+      } else if (textLower.includes("fight") || textLower.includes("drama") || textLower.includes("spotted") || textLower.includes("celeb") || textLower.includes("gossip")) {
+        fallbackCategory = "Local Drama";
+        fallbackTitle = "West End Street Drama Spotted! 💀";
+      } else if (textLower.includes("protest") || textLower.includes("strike") || textLower.includes("march") || textLower.includes("rally")) {
+        fallbackCategory = "Protest / Rally";
+        fallbackTitle = "Huge Protest Blockade! 📣";
+      } else if (textLower.includes("power") || textLower.includes("blackout") || textLower.includes("electricity") || textLower.includes("outage")) {
+        fallbackCategory = "Power Cut";
+        fallbackTitle = "Sudden Power Blackout! 🔌";
+      } else if (textLower.includes("garbage") || textLower.includes("waste") || textLower.includes("trash")) {
+        fallbackCategory = "Garbage";
+        fallbackTitle = "Unregulated Trash Dumping! 🗑️";
+      } else if (textLower.includes("corruption") || textLower.includes("bribe") || textLower.includes("graft") || textLower.includes("shady")) {
+        fallbackCategory = "Corruption";
+        fallbackTitle = "Local Corruption Allegation! 💼";
+      }
+
+      if (description.length < 5 || textLower.includes("buy cheap") || textLower.includes("promo code") || textLower.includes("test test")) {
+        isSpam = true;
+        spamReasoning = "Suspicious spam pattern detected (Heuristics)";
+      }
+
+      const ai = getGeminiAI();
+      if (!ai) {
+        return res.json({
+          category: fallbackCategory,
+          title: fallbackTitle,
+          isSpam,
+          spamReasoning
+        });
+      }
+
+      const prompt = `
+You are GroundZero Civic & Local News AI. Your role is to classify, title, and analyze citizen reports worldwide, with a modern, alert, hyperlocal citizen-journalist tone.
+Given the text description, return a JSON object ONLY.
+
+Your response MUST be a JSON object with this exact structure:
+{
+  "category": "one of: Civic Issue, Pothole, Flooding, Power Cut, Garbage, Corruption, Government Failure, Protest / Rally, Local Drama, Argument / Dispute, Harassment, Breaking News, Village Problem, Weather, War / Conflict, Other",
+  "title": "A super punchy, Gen-Z / hyperlocal citizen news headline (4-8 words), using appropriate emojis (e.g. 'Traffic is Absolutely Cooked 💀')",
+  "isSpam": true or false,
+  "spamReasoning": "If isSpam is true, write a brief explanation (e.g., 'Not related to local issues or civic reporting, advertising link, or gibberish text')"
+}
+
+Do not include any Markdown wrapping or codeblocks. Ensure it is valid, parseable JSON.
+
+Reporter's Description: "${description}"
+`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const resText = response.text || "";
+      const cleanJsonText = resText.trim().replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+      const resultObj = JSON.parse(cleanJsonText);
+
+      return res.json({
+        category: categories.includes(resultObj.category) ? resultObj.category : fallbackCategory,
+        title: resultObj.title || fallbackTitle,
+        isSpam: !!resultObj.isSpam,
+        spamReasoning: resultObj.spamReasoning || ""
+      });
+
+    } catch (err: any) {
+      console.error("Error in analyze-text API:", err);
+      // Fail gracefully with fallback heuristics
+      return res.json({
+        category: "Other",
+        title: "Incident Spotted!",
+        isSpam: false,
+        spamReasoning: ""
+      });
+    }
+  });
+
+  // Analyze photo with Gemini Vision
+  app.post("/api/gemini/analyze-photo", async (req, res) => {
+    try {
+      const { photoUrl } = req.body;
+      if (!photoUrl) {
+        return res.status(400).json({ error: "Missing photoUrl" });
+      }
+
+      const ai = getGeminiAI();
+      if (!ai) {
+        return res.json({
+          description: "A photo was uploaded for this report.",
+          suggestedCategory: "Other"
+        });
+      }
+
+      const base64Data = photoUrl.replace(/^data:image\/\w+;base64,/, "");
+      const mimeType = photoUrl.match(/^data:(image\/\w+);base64,/)?.[1] || "image/jpeg";
+
+      const prompt = `
+Analyze this image uploaded by a citizen for a local civic reporting app.
+Return a JSON object ONLY with the following exact structure:
+{
+  "description": "A 1-2 sentence detailed but crisp and objective description of what's in the photo, e.g., 'Visual shows an open manhole with overflowing sewage and safety cones placed around it.'",
+  "suggestedCategory": "one of the following exact categories: Civic Issue, Pothole, Flooding, Power Cut, Garbage, Corruption, Government Failure, Protest / Rally, Local Drama, Argument / Dispute, Harassment, Breaking News, Village Problem, Weather, War / Conflict, Other"
+}
+Ensure it is valid, parseable JSON. Do not include any markdown formatting or codeblocks.
+`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType
+            }
+          },
+          prompt
+        ],
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const resText = response.text || "";
+      const cleanJsonText = resText.trim().replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+      const resultObj = JSON.parse(cleanJsonText);
+
+      return res.json({
+        description: resultObj.description || "Uploaded evidence analyzed by AI.",
+        suggestedCategory: resultObj.suggestedCategory || "Other"
+      });
+
+    } catch (err: any) {
+      console.error("Error in analyze-photo API:", err);
+      return res.json({
+        description: "A photo was uploaded.",
+        suggestedCategory: "Other"
+      });
+    }
+  });
+
   // Dashboard analytics endpoint
   app.get("/api/dashboard/metrics", (req, res) => {
     const totalIssues = activeIssues.length;

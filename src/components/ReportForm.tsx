@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Category } from "../types";
 import { Camera, MapPin, Sparkles, Check, Loader2, AlertCircle, EyeOff, ShieldAlert, ArrowLeft, Navigation } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -66,6 +66,84 @@ export default function ReportForm({
   const [mediaType, setMediaType] = useState<'photo' | 'video'>('photo');
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [useAI, setUseAI] = useState(true);
+
+  // Gemini real-time states
+  const [isAiReading, setIsAiReading] = useState(false);
+  const [aiAnalysisResult, setAiAnalysisResult] = useState<{
+    category: Category;
+    title: string;
+    isSpam: boolean;
+    spamReasoning: string;
+  } | null>(null);
+  const [showAiCard, setShowAiCard] = useState(false);
+
+  const [isAiVisionLoading, setIsAiVisionLoading] = useState(false);
+  const [aiVisionResult, setAiVisionResult] = useState<{
+    description: string;
+    suggestedCategory: Category;
+  } | null>(null);
+
+  const lastAnalyzedTextRef = useRef("");
+
+  useEffect(() => {
+    if (!description || description.trim().length < 10) {
+      setAiAnalysisResult(null);
+      setShowAiCard(false);
+      setIsAiReading(false);
+      return;
+    }
+
+    if (description === lastAnalyzedTextRef.current) {
+      return;
+    }
+
+    setIsAiReading(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch("/api/gemini/analyze-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ description })
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setAiAnalysisResult(data);
+          setShowAiCard(true);
+          lastAnalyzedTextRef.current = description;
+        }
+      } catch (err) {
+        console.error("Failed to analyze description via real-time Gemini:", err);
+      } finally {
+        setIsAiReading(false);
+      }
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [description]);
+
+  const analyzePhotoWithAi = async (photoBase64: string) => {
+    setIsAiVisionLoading(true);
+    setAiVisionResult(null);
+    try {
+      const response = await fetch("/api/gemini/analyze-photo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ photoUrl: photoBase64 })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setAiVisionResult(data);
+        if (data.suggestedCategory && data.suggestedCategory !== "Other") {
+          setCategory(data.suggestedCategory);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to analyze photo via real-time Gemini Vision:", err);
+    } finally {
+      setIsAiVisionLoading(false);
+    }
+  };
 
   const [isPending, setIsPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -189,6 +267,7 @@ export default function ReportForm({
               const updated = [...prev, ...results].slice(0, 5);
               if (updated.length > 0) {
                 setPhotoUrl(updated[0]); // legacy compatibility
+                analyzePhotoWithAi(updated[0]);
               }
               return updated;
             });
@@ -367,6 +446,25 @@ export default function ReportForm({
               })}
             </div>
           )}
+
+          {isAiVisionLoading && (
+            <div className="flex items-center gap-1.5 mt-2.5 p-2 bg-brand/5 border border-brand/10 rounded-lg text-brand text-[10px] font-mono uppercase tracking-wide animate-pulse">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-brand" />
+              <span>👁️ Gemini Vision is inspecting uploaded evidence...</span>
+            </div>
+          )}
+
+          {aiVisionResult && (
+            <div className="mt-2.5 p-3 bg-[#111111] border border-brand/20 rounded-lg space-y-1.5" id="gemini-vision-card">
+              <p className="text-[11px] text-gray-300 font-sans leading-relaxed">
+                👁️ <span className="font-semibold text-brand">AI sees:</span> {aiVisionResult.description}
+              </p>
+              <div className="flex items-center gap-1.5 text-[9px] font-mono uppercase text-gray-400">
+                <span>✅ Auto-suggested category:</span>
+                <span className="px-2 py-0.5 bg-brand text-[#0A0A0A] rounded font-black">{aiVisionResult.suggestedCategory}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Step 2: SELECT CATEGORY */}
@@ -431,6 +529,81 @@ export default function ReportForm({
             className="w-full px-3 py-2 text-xs bg-[#0A0A0A] border border-gray-900 rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-brand/60 font-sans resize-none"
             id="report-desc-textarea"
           />
+
+          {isAiReading && (
+            <div className="flex items-center gap-1.5 mt-2 text-emerald-400 text-[10px] font-mono uppercase tracking-wide animate-pulse">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>AI is reading your report...</span>
+            </div>
+          )}
+
+          {/* Gemini Real-time Text Analysis Card */}
+          <AnimatePresence>
+            {showAiCard && aiAnalysisResult && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mt-3 p-4 bg-emerald-950/20 border-2 border-emerald-500/30 rounded-xl space-y-3 relative overflow-hidden"
+                id="gemini-ai-analysis-card"
+              >
+                {/* Corner Glow */}
+                <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-xl pointer-events-none" />
+
+                <div className="flex justify-between items-start">
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-black text-emerald-400 font-sans flex items-center gap-1.5">
+                      🤖 AI detected: {aiAnalysisResult.category}
+                    </p>
+                    <p className="text-[11px] text-gray-300 font-sans leading-relaxed">
+                      📰 <span className="font-semibold text-emerald-300">Suggested headline:</span> "{aiAnalysisResult.title}"
+                    </p>
+                    <p className="text-[10px] text-emerald-500 font-mono uppercase tracking-wider font-bold">
+                      ✅ Auto-selected category: {aiAnalysisResult.category}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCategory(aiAnalysisResult.category);
+                      setUseAI(true);
+                      setSuccessMsg(`Applied suggested category "${aiAnalysisResult.category}" & dynamic headline!`);
+                      setTimeout(() => setSuccessMsg(""), 3000);
+                    }}
+                    className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black text-[10px] font-mono font-black uppercase rounded-lg transition-all flex items-center gap-1 shadow-lg shadow-emerald-500/10 cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5 text-black shrink-0" />
+                    <span>Use this</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUseAI(false);
+                      setSuccessMsg("Manual override active. Please pick category & enter headline manually.");
+                      setTimeout(() => setSuccessMsg(""), 3000);
+                    }}
+                    className="px-3 py-1.5 bg-[#141414] hover:bg-[#1a1a1a] text-gray-300 hover:text-white border border-gray-800 text-[10px] font-mono font-bold uppercase rounded-lg transition-all cursor-pointer"
+                  >
+                    Edit manually
+                  </button>
+                </div>
+
+                {/* Small "Powered by Gemini" badge */}
+                <div className="pt-2.5 border-t border-emerald-500/10 flex items-center justify-between text-[8px] text-emerald-500/60 font-mono uppercase tracking-widest">
+                  <span>RADAR AI CORE v1.0</span>
+                  <span className="flex items-center gap-1 font-bold text-emerald-400">
+                    <Sparkles className="w-2.5 h-2.5 text-emerald-400" />
+                    Powered by Gemini
+                  </span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Step 4: Coordinates Location selection */}
