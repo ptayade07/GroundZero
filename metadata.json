@@ -1,0 +1,6 @@
+{
+  "name": "GroundZero",
+  "description": "GroundZero - Real-time hyperlocal citizen news, civic reporting, and local drama feed worldwide with Google Maps, community reactions, trust scores, and Gemini AI integration.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
