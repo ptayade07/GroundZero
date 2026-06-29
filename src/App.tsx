@@ -13,6 +13,7 @@ import ReportForm from "./components/ReportForm";
 import AnalyticsDashboard from "./components/AnalyticsDashboard";
 import UserProfile from "./components/UserProfile";
 import SocialFeed from "./components/SocialFeed";
+import Onboarding from "./components/Onboarding";
 import { Map, Plus, BarChart3, User as UserIcon, ShieldAlert, Navigation, Layers, AlertCircle, Sparkles, Check, ChevronDown, ListFilter, SlidersHorizontal, MessageSquare } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -20,6 +21,7 @@ export default function App() {
   // State managers
   const [user, setUser] = useState<User | null>(null);
   const [showLanding, setShowLanding] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [view, setView] = useState<"map" | "feed" | "report" | "profile">("map");
   const [issues, setIssues] = useState<Issue[]>([]);
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
@@ -118,6 +120,11 @@ export default function App() {
         setUser(parsed);
         setShowLanding(false);
         refreshUserTrustScore(parsed.id);
+
+        const onboardingCompleted = localStorage.getItem("gz_onboarding_completed") === "true";
+        if (!onboardingCompleted) {
+          setShowOnboarding(true);
+        }
       } catch (e) {
         localStorage.removeItem("gz_citizen");
       }
@@ -154,7 +161,13 @@ export default function App() {
         setUser(data.user);
         localStorage.setItem("gz_citizen", JSON.stringify(data.user));
         triggerToast(`Welcome to GroundZero Grid, ${data.user.name}!`);
-        setView("map");
+        
+        const onboardingCompleted = localStorage.getItem("gz_onboarding_completed") === "true";
+        if (!onboardingCompleted) {
+          setShowOnboarding(true);
+        } else {
+          setView("map");
+        }
       }
     } catch (err: any) {
       setErrorMessage(err.message || "Connection refused to GroundZero central server.");
@@ -355,6 +368,18 @@ export default function App() {
         </div>
       );
     }
+  }
+
+  if (showOnboarding) {
+    return (
+      <Onboarding
+        onComplete={() => {
+          localStorage.setItem("gz_onboarding_completed", "true");
+          setShowOnboarding(false);
+          setView("map");
+        }}
+      />
+    );
   }
 
   return (
