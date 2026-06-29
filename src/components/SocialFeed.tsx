@@ -171,9 +171,18 @@ export default function SocialFeed({
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span className="text-xs shrink-0">{issue.isAnonymous ? "👤" : "⚡"}</span>
                     <div className="min-w-0">
-                      <p className="text-gray-200 font-bold truncate">
-                        {issue.isAnonymous ? "Anonymous Citizen" : issue.reporterName}
-                      </p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-gray-200 font-bold truncate">
+                          {issue.isAnonymous 
+                            ? (issue.reporterName.startsWith("Anonymous Citizen") && issue.reporterName.includes("#") 
+                                ? issue.reporterName 
+                                : `Anonymous Citizen #` + (Math.abs(issue.id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0)) % 9000 + 1000))
+                            : issue.reporterName}
+                        </p>
+                        <span className="text-[8px] px-1 bg-[#141414] border border-brand/20 text-brand font-mono rounded font-black tracking-tight shrink-0">
+                          🛡️ {issue.reporterTrustScore}
+                        </span>
+                      </div>
                       <p className="text-[8px] text-gray-500 font-mono tracking-tight leading-none uppercase truncate">
                         {getRankBadge(issue.reporterTrustScore)}
                       </p>

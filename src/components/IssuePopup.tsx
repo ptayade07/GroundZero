@@ -228,9 +228,20 @@ export default function IssuePopup({
                     : "bg-[#0A0A0A] border-gray-800/80 text-gray-400 hover:border-gray-700 hover:text-gray-200"
                 }`}
               >
-                <div className="flex justify-between items-center text-[9px] w-full font-semibold">
-                  <span>{sib.isAnonymous ? "Anonymous Citizen" : sib.reporterName}</span>
-                  <span className="text-[8px] text-gray-500 font-mono font-normal">{timeAgo(sib.createdAt)}</span>
+                <div className="flex justify-between items-center text-[9px] w-full font-semibold gap-1">
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className="truncate">
+                      {sib.isAnonymous 
+                        ? (sib.reporterName.startsWith("Anonymous Citizen") && sib.reporterName.includes("#") 
+                            ? sib.reporterName 
+                            : `Anonymous Citizen #` + (Math.abs(sib.id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0)) % 9000 + 1000))
+                        : sib.reporterName}
+                    </span>
+                    <span className="text-[7.5px] px-1 bg-black border border-brand/20 text-brand font-mono rounded font-black tracking-tight shrink-0">
+                      🛡️ {sib.reporterTrustScore}
+                    </span>
+                  </div>
+                  <span className="text-[8px] text-gray-500 font-mono font-normal shrink-0">{timeAgo(sib.createdAt)}</span>
                 </div>
                 <p className="text-[10px] line-clamp-1 leading-snug mt-0.5">
                   {sib.description}
@@ -314,9 +325,18 @@ export default function IssuePopup({
             {issue.isAnonymous ? "👤" : "⚡"}
           </div>
           <div>
-            <p className="text-gray-200 font-bold font-sans">
-              {issue.isAnonymous ? "Anonymous Citizen" : issue.reporterName}
-            </p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <p className="text-gray-200 font-bold font-sans">
+                {issue.isAnonymous 
+                  ? (issue.reporterName.startsWith("Anonymous Citizen") && issue.reporterName.includes("#") 
+                      ? issue.reporterName 
+                      : `Anonymous Citizen #` + (Math.abs(issue.id.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0)) % 9000 + 1000))
+                  : issue.reporterName}
+              </p>
+              <span className="text-[8px] px-1 bg-[#141414] border border-brand/20 text-brand font-mono rounded font-black tracking-tight shrink-0">
+                🛡️ {issue.reporterTrustScore}
+              </span>
+            </div>
             <p className="text-gray-500 font-mono text-[8px] uppercase">OPERATIVE</p>
           </div>
         </div>
@@ -409,40 +429,7 @@ export default function IssuePopup({
         </button>
       )}
 
-      {/* Admin Demo Simulation Controls */}
-      {onUpdateStatus && (
-        <div className="mt-3.5 pt-2 border-t border-gray-900">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setIsAdminPanelOpen(!isAdminPanelOpen)}
-              className="text-[8px] text-brand hover:underline font-mono uppercase tracking-widest cursor-pointer"
-              id="admin-tools-toggle"
-            >
-              🛠️ {isAdminPanelOpen ? "Collapse Sandbox Ward Tools" : "Expand Sandbox Ward Tools"}
-            </button>
-          </div>
 
-          {isAdminPanelOpen && (
-            <div className="mt-2 p-2 bg-[#0A0A0A] rounded-xl border border-gray-900 flex flex-wrap gap-1.5 items-center">
-              <span className="text-[8px] text-gray-500 font-mono block w-full uppercase tracking-wider">FORCE GRID STATE (WARD CONTROL):</span>
-              {["Reported", "Verified", "Escalated", "Resolved"].map((st) => (
-                <button
-                  key={st}
-                  onClick={() => onUpdateStatus(issue.id, st as Status)}
-                  className={`px-2 py-1 text-[8px] font-mono rounded border uppercase cursor-pointer ${
-                    issue.status === st
-                      ? "bg-brand text-[#0A0A0A] border-brand font-black"
-                      : "bg-[#141414] text-gray-400 border-gray-800 hover:text-white"
-                  }`}
-                  id={`sandbox-status-${st}`}
-                >
-                  {st}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </motion.div>
   );
 }
