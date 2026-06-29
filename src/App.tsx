@@ -170,6 +170,12 @@ export default function App() {
     triggerToast("Logged out of GroundZero operations grid.");
   };
 
+  const handleUpdateUser = (updatedUser: any) => {
+    setUser(updatedUser);
+    localStorage.setItem("gz_citizen", JSON.stringify(updatedUser));
+    triggerToast(`Anonymity shield ${updatedUser.isAnonymous ? "activated" : "deactivated"}.`);
+  };
+
   // Submitting a new issue report
   const handleReportSubmit = async (reportData: {
     description: string;
@@ -639,7 +645,7 @@ export default function App() {
                 }`}
                 id="profile-subtab-registry"
               >
-                👤 My Registry
+                👤 My Profile
               </button>
               <button
                 onClick={() => setProfileSubTab("dashboard")}
@@ -659,6 +665,7 @@ export default function App() {
                 user={user}
                 issues={issues}
                 onLogout={handleLogout}
+                onUpdateUser={handleUpdateUser}
                 onSelectIssue={(issue) => {
                   setSelectedIssue(issue);
                   setView("map"); // Swaps to map to highlight selected history complaint

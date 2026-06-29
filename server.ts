@@ -693,6 +693,21 @@ async function startServer() {
     });
   });
 
+  // Update user details (e.g. toggle anonymity)
+  app.post("/api/users/:id/update", (req, res) => {
+    const { id } = req.params;
+    const { isAnonymous } = req.body;
+    const user = activeUsers[id];
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    user.isAnonymous = !!isAnonymous;
+    res.json({
+      success: true,
+      user
+    });
+  });
+
   // Dashboard analytics endpoint
   app.get("/api/dashboard/metrics", (req, res) => {
     const totalIssues = activeIssues.length;
