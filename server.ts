@@ -291,7 +291,8 @@ function getAreaFromCoords(lat: number, lng: number): string {
 // AI Auto-categorizer + photo analysis + spam checker
 async function autoCategorizeWithAI(
   description: string,
-  photoBase64?: string
+  mediaUrls?: string[],
+  mediaType?: 'photo' | 'video'
 ): Promise<{
   category: Category;
   title: string;
@@ -368,7 +369,7 @@ async function autoCategorizeWithAI(
     defaultRes.title = "Government Service Failure! 🏛️";
   }
 
-  // Check if text is gibberish or spamby by simple heuristics
+  // Check if text is gibberish or spam by simple heuristics
   if (description.length < 5 || textLower.includes("buy cheap") || textLower.includes("promo code") || textLower.includes("test test")) {
     defaultRes.isSpam = true;
     defaultRes.spamReasoning = "Suspicious spam pattern detected (Heuristics)";
@@ -382,13 +383,13 @@ async function autoCategorizeWithAI(
   try {
     const prompt = `
 You are GroundZero Civic & Local News AI. Your role is to classify, title, and analyze citizen reports worldwide, with a modern, alert, hyperlocal citizen-journalist tone.
-Given the text description and optional image, return a JSON object ONLY.
+Given the text description and optional evidence photos/video, return a JSON object ONLY.
 
 Your response MUST be a JSON object with this exact structure:
 {
   "category": "one of: Civic Issue, Pothole, Flooding, Power Cut, Garbage, Corruption, Government Failure, Protest / Rally, Local Drama, Argument / Dispute, Harassment, Breaking News, Village Problem, Weather, War / Conflict, Other",
   "title": "A super punchy, Gen-Z / hyperlocal citizen news headline (4-8 words), using appropriate emojis (e.g. 'Traffic is Absolutely Cooked 💀')",
-  "aiDescription": "A 1-2 sentence crisp, objective description of what's occurring, analyzing the uploaded photo if present.",
+  "aiDescription": "A 1-2 sentence crisp, objective description of what's occurring, analyzing the uploaded photo/video if present.",
   "isSpam": true or false,
   "spamReasoning": "If isSpam is true, write a brief explanation (e.g., 'Not related to local issues or civic reporting, advertising link, or gibberish text')"
 }
@@ -396,36 +397,41 @@ Your response MUST be a JSON object with this exact structure:
 Do not include any Markdown wrapping or codeblocks. Ensure it is valid, parseable JSON.
 
 Reporter's Description: "${description}"
+${mediaType === 'video' ? `Evidence attached: 1 Video file.` : `Evidence attached: ${mediaUrls ? mediaUrls.length : 0} Photo files.`}
 `;
 
-    let response;
-    if (photoBase64) {
-      const base64Data = photoBase64.replace(/^data:image\/\w+;base64,/, "");
-      const mimeType = photoBase64.match(/^data:(image\/\w+);base64,/)?.[1] || "image/jpeg";
-      response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [
-          {
+    const contents: any[] = [];
+    
+    // Add media parts to content if available
+    if (mediaUrls && mediaUrls.length > 0) {
+      if (mediaType === 'video') {
+        // Just note in prompt since video base64 can exceed limits or require different model treatment.
+        // We can pass video mime if small, or keep it text. Let's send text first.
+      } else {
+        // Pass up to 3 photos to Gemini
+        mediaUrls.slice(0, 3).forEach(photoBase64 => {
+          const base64Data = photoBase64.replace(/^data:image\/\w+;base64,/, "");
+          const mimeType = photoBase64.match(/^data:(image\/\w+);base64,/)?.[1] || "image/jpeg";
+          contents.push({
             inlineData: {
               data: base64Data,
               mimeType
             }
-          },
-          prompt
-        ],
-        config: {
-          responseMimeType: "application/json"
-        }
-      });
-    } else {
-      response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json"
-        }
-      });
+          });
+        });
+      }
     }
+    
+    // Add prompt
+    contents.push(prompt);
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents,
+      config: {
+        responseMimeType: "application/json"
+      }
+    });
 
     const resText = response.text || "";
     const cleanJsonText = resText.trim().replace(/^```json\s*/i, "").replace(/```$/, "").trim();
@@ -514,7 +520,7 @@ async function startServer() {
   // Post new issue (with optional Gemini auto-classification + Vision + Spam check)
   app.post("/api/issues", async (req, res) => {
     try {
-      const { description, category, photoUrl, lat, lng, reporterId, isAnonymous, useAI } = req.body;
+      const { description, category, photoUrl, mediaUrls, mediaType, parentIssueId, lat, lng, reporterId, isAnonymous, useAI } = req.body;
 
       if (!description || !lat || !lng || !reporterId) {
         return res.status(400).json({ error: "Missing required fields (description, lat, lng, reporterId)" });
@@ -522,7 +528,7 @@ async function startServer() {
 
       const reporter = activeUsers[reporterId] || { id: reporterId, name: "Anonymous Citizen", trustScore: 40 };
 
-      let finalCategory = category || "drama";
+      let finalCategory = category || "Other";
       let finalTitle = description.substring(0, 35) + "...";
       let aiDescription = "AI verified local citizen report.";
       let isSpam = false;
@@ -530,7 +536,7 @@ async function startServer() {
 
       // Call AI to classify, analyze, do vision and spam checks
       console.log("Analyzing text / photo with Gemini...");
-      const classification = await autoCategorizeWithAI(description, photoUrl);
+      const classification = await autoCategorizeWithAI(description, mediaUrls || (photoUrl ? [photoUrl] : []), mediaType || 'photo');
       
       if (useAI) {
         finalCategory = classification.category;
@@ -556,7 +562,10 @@ async function startServer() {
         lat,
         lng,
         area: areaName,
-        photoUrl, // Base64 representation
+        photoUrl: photoUrl || (mediaUrls && mediaUrls.length > 0 ? mediaUrls[0] : ""), // Compatibility
+        mediaUrls: mediaUrls || (photoUrl ? [photoUrl] : []),
+        mediaType: mediaType || 'photo',
+        parentIssueId,
         reporterId: reporter.id,
         reporterName: (reporter as any).isAnonymous ? reporter.name : (activeUsers[reporterId]?.name || reporter.name),
         reporterTrustScore: reporter.trustScore,

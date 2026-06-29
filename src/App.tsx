@@ -29,12 +29,29 @@ export default function App() {
   // Filter and Search for Map/Feed list
   const [categoryFilter, setCategoryFilter] = useState<Category | "all">("all");
   const [statusFilter, setStatusFilter] = useState<Status | "all">("all");
+  const [timeFilter, setTimeFilter] = useState<"2hrs" | "today" | "week" | "all">("today");
   const [showFeedDrawer, setShowFeedDrawer] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   // Report Form placement states
   const [isSelectingLocationMode, setIsSelectingLocationMode] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState<{ lat: number; lng: number; area: string } | null>(null);
+  const [preLinkedParentIssue, setPreLinkedParentIssue] = useState<Issue | null>(null);
+
+  const handleAddPerspective = (parentId: string) => {
+    const parentIssue = issues.find(i => i.id === parentId);
+    if (parentIssue) {
+      setPreLinkedParentIssue(parentIssue);
+      setSelectedLocation({
+        lat: parentIssue.lat,
+        lng: parentIssue.lng,
+        area: parentIssue.area
+      });
+      setSelectedIssue(null);
+      setView("report");
+      triggerToast(`Adding perspective linked to: "${parentIssue.title}"`);
+    }
+  };
 
   // Global loading and error message banners
   const [isLoading, setIsLoading] = useState(false);
@@ -154,6 +171,9 @@ export default function App() {
     description: string;
     category: Category | "";
     photoUrl: string;
+    mediaUrls?: string[];
+    mediaType?: 'photo' | 'video';
+    parentIssueId?: string;
     lat: number;
     lng: number;
     isAnonymous: boolean;
@@ -184,6 +204,7 @@ export default function App() {
       // Reset creation states
       setSelectedLocation(null);
       setIsSelectingLocationMode(false);
+      setPreLinkedParentIssue(null);
       setView("map");
 
       // Highlight newest report on map instantly
@@ -277,7 +298,23 @@ export default function App() {
       issue.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       issue.area.toLowerCase().includes(searchQuery.toLowerCase());
 
-    return categoryMatches && statusMatches && searchMatches;
+    // Time filter matching
+    let timeMatches = true;
+    if (timeFilter !== "all") {
+      const createdTime = new Date(issue.createdAt).getTime();
+      const now = Date.now();
+      const diffMs = now - createdTime;
+
+      if (timeFilter === "2hrs") {
+        timeMatches = diffMs <= 2 * 60 * 60 * 1000;
+      } else if (timeFilter === "today") {
+        timeMatches = diffMs <= 24 * 60 * 60 * 1000;
+      } else if (timeFilter === "week") {
+        timeMatches = diffMs <= 7 * 24 * 60 * 60 * 1000;
+      }
+    }
+
+    return categoryMatches && statusMatches && searchMatches && timeMatches;
   });
 
   return (
@@ -289,10 +326,16 @@ export default function App() {
           <div className="px-2 py-1 bg-gradient-to-tr from-[#124d04] to-brand rounded text-xs font-black font-mono shadow-md shadow-brand/20 text-[#0A0A0A]">
             GZ
           </div>
-          <div>
-            <h1 className="text-sm font-black tracking-tight uppercase leading-none text-white">
-              GROUND<span className="text-brand">ZERO</span>
-            </h1>
+          <div className="flex flex-col justify-center">
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-sm font-black tracking-tight uppercase leading-none text-white">
+                GROUND<span className="text-brand">ZERO</span>
+              </h1>
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-950/80 border border-[#39FF14]/30 text-[#39FF14] text-[8px] font-black tracking-wider uppercase">
+                <span className="w-1 h-1 rounded-full bg-[#39FF14] animate-ping" />
+                <span className="animate-pulse">LIVE</span>
+              </span>
+            </div>
             <p className="text-[8px] text-gray-500 font-mono leading-none tracking-widest uppercase mt-0.5">
               LIVE HYPERLOCAL CITIZEN GRID
             </p>
@@ -358,6 +401,31 @@ export default function App() {
                       ×
                     </button>
                   )}
+                </div>
+
+                {/* Time filter row below search bar */}
+                <div className="flex gap-1 overflow-x-auto pb-0.5 scrollbar-none" id="radar-time-filters">
+                  {(["2hrs", "today", "week", "all"] as const).map((opt) => {
+                    const label = {
+                      "2hrs": "Last 2hrs",
+                      "today": "Today",
+                      "week": "This Week",
+                      "all": "All Time"
+                    }[opt];
+                    return (
+                      <button
+                        key={opt}
+                        onClick={() => setTimeFilter(opt)}
+                        className={`px-2.5 py-1 rounded-full text-[9px] font-mono tracking-wider font-bold shrink-0 transition-all cursor-pointer border ${
+                          timeFilter === opt
+                            ? "bg-[#39FF14] text-[#0A0A0A] border-[#39FF14] shadow-[0_0_6px_rgba(57,255,20,0.3)]"
+                            : "bg-[#0A0A0A]/95 text-gray-500 border-gray-800/80 hover:text-white"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* Filters Collapse Row */}
@@ -478,15 +546,18 @@ export default function App() {
                 selectedLocation={selectedLocation}
               />
 
-              {/* Clicked Map Pin Info Overlay Popup */}
+               {/* Clicked Map Pin Info Overlay Popup */}
               <AnimatePresence>
                 {selectedIssue && (
                   <IssuePopup
                     issue={selectedIssue}
+                    allIssues={issues}
                     currentUserId={user.id}
                     onClose={() => setSelectedIssue(null)}
                     onReact={handleReactToIssue}
                     onUpdateStatus={handleUpdateStatus} // Admin simulation tools!
+                    onAddPerspective={handleAddPerspective}
+                    onSelectPerspective={setSelectedIssue}
                   />
                 )}
               </AnimatePresence>
@@ -513,9 +584,16 @@ export default function App() {
                 onCancel={() => {
                   setSelectedLocation(null);
                   setIsSelectingLocationMode(false);
+                  setPreLinkedParentIssue(null);
                   setView("map");
                 }}
                 selectedLocation={selectedLocation}
+                parentIssueId={preLinkedParentIssue?.id}
+                parentIssue={preLinkedParentIssue}
+                onClearParentIssue={() => {
+                  setPreLinkedParentIssue(null);
+                  setSelectedLocation(null);
+                }}
                 onEnterLocationSelectionMode={handleEnterLocationSelectionMode}
                 onSelectLocation={handleSelectLocationForNewIssue}
               />

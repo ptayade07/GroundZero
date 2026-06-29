@@ -48,6 +48,9 @@ export interface Issue {
   lng: number;
   area: string;
   photoUrl?: string; // Base64 or local URL
+  mediaUrls?: string[]; // Array of base64 photos or single video
+  mediaType?: 'photo' | 'video';
+  parentIssueId?: string; // Linked parent perspective ID
   reporterId: string;
   reporterName: string;
   reporterTrustScore: number;

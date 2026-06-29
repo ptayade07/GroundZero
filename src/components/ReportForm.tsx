@@ -13,6 +13,9 @@ interface ReportFormProps {
     description: string;
     category: Category | "";
     photoUrl: string;
+    mediaUrls?: string[];
+    mediaType?: 'photo' | 'video';
+    parentIssueId?: string;
     lat: number;
     lng: number;
     isAnonymous: boolean;
@@ -20,6 +23,9 @@ interface ReportFormProps {
   }) => Promise<void>;
   onCancel: () => void;
   selectedLocation: { lat: number; lng: number; area: string } | null;
+  parentIssueId?: string;
+  parentIssue?: any | null;
+  onClearParentIssue?: () => void;
   onEnterLocationSelectionMode: () => void;
   onSelectLocation: (lat: number, lng: number, area: string) => void;
 }
@@ -47,12 +53,17 @@ export default function ReportForm({
   onSubmit,
   onCancel,
   selectedLocation,
+  parentIssueId,
+  parentIssue,
+  onClearParentIssue,
   onEnterLocationSelectionMode,
   onSelectLocation
 }: ReportFormProps) {
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState<Category | "">("");
   const [photoUrl, setPhotoUrl] = useState("");
+  const [mediaUrls, setMediaUrls] = useState<string[]>([]);
+  const [mediaType, setMediaType] = useState<'photo' | 'video'>('photo');
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [useAI, setUseAI] = useState(true);
 
@@ -126,25 +137,67 @@ export default function ReportForm({
     );
   };
 
-  // Convert uploaded image to base64 representation
+  // Convert uploaded files to base64 representations (supporting up to 5 photos or 1 video)
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    if (file.size > 8 * 1024 * 1024) {
-      setErrorMessage("File exceeds 8MB size limit. Please choose a smaller photo.");
-      return;
+    const fileList = Array.from(files) as File[];
+    const hasVideo = fileList.some(f => f.type.startsWith("video/"));
+    
+    if (hasVideo) {
+      // 1 video limit
+      const videoFile = fileList.find(f => f.type.startsWith("video/"))!;
+      if (videoFile.size > 25 * 1024 * 1024) {
+        setErrorMessage("Video exceeds 25MB limit. Please upload a smaller video clip.");
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setMediaUrls([reader.result as string]);
+        setMediaType("video");
+        setPhotoUrl(""); // clear for legacy compatibility
+        setErrorMessage("");
+      };
+      reader.readAsDataURL(videoFile);
+    } else {
+      // Photo files (up to 5)
+      const imageFiles = fileList.filter(f => f.type.startsWith("image/"));
+      if (imageFiles.length === 0) {
+        setErrorMessage("Please select valid image or video files.");
+        return;
+      }
+      
+      let processed = 0;
+      const results: string[] = [];
+      setMediaType("photo");
+      
+      imageFiles.forEach(file => {
+        if (file.size > 8 * 1024 * 1024) {
+          setErrorMessage("One or more photos exceed 8MB limit.");
+          return;
+        }
+        
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          results.push(reader.result as string);
+          processed++;
+          if (processed === imageFiles.length) {
+            setMediaUrls(prev => {
+              // combine and limit to 5
+              const updated = [...prev, ...results].slice(0, 5);
+              if (updated.length > 0) {
+                setPhotoUrl(updated[0]); // legacy compatibility
+              }
+              return updated;
+            });
+            setErrorMessage("");
+          }
+        };
+        reader.readAsDataURL(file);
+      });
     }
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setPhotoUrl(reader.result as string);
-      setErrorMessage("");
-    };
-    reader.onerror = () => {
-      setErrorMessage("Failed to read image file.");
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleManualAreaSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -161,13 +214,13 @@ export default function ReportForm({
     e.preventDefault();
     setErrorMessage("");
 
-    if (!description.trim()) {
-      setErrorMessage("Please enter a clear description of the civic issue.");
+    if (!category) {
+      setErrorMessage("Please select a category in STEP 2 before submitting.");
       return;
     }
 
-    if (!useAI && !category) {
-      setErrorMessage("Please select a category or enable AI Auto-Detect.");
+    if (!description.trim()) {
+      setErrorMessage("Please enter a clear description of the civic issue.");
       return;
     }
 
@@ -196,6 +249,9 @@ export default function ReportForm({
         description,
         category: useAI ? "" : (category as Category),
         photoUrl,
+        mediaUrls,
+        mediaType,
+        parentIssueId,
         lat: finalLat,
         lng: finalLng,
         isAnonymous,
@@ -213,6 +269,7 @@ export default function ReportForm({
     <div className="w-full max-w-lg mx-auto bg-[#0A0A0A]/95 border border-gray-900 rounded-xl shadow-xl overflow-hidden p-4 md:p-6 text-white" id="report-creation-view">
       <div className="flex items-center gap-2 mb-4">
         <button
+          type="button"
           onClick={onCancel}
           className="p-1.5 rounded-lg bg-[#141414] text-gray-400 hover:text-brand transition-all mr-1 cursor-pointer"
           id="report-back-btn"
@@ -225,71 +282,119 @@ export default function ReportForm({
         </div>
       </div>
 
+      {/* Linked Incident Banner if pre-linked parent post is active */}
+      {parentIssue && (
+        <div className="mb-4 p-3 bg-brand/10 border border-brand/30 rounded-xl flex items-center justify-between text-xs animate-pulse">
+          <div className="flex items-center gap-2">
+            <span className="text-sm">🔗</span>
+            <div>
+              <p className="font-bold text-brand">Linked to Incident</p>
+              <p className="text-[10px] text-gray-300 line-clamp-1">"{parentIssue.title}"</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClearParentIssue}
+            className="px-2 py-1 bg-gray-900 hover:bg-gray-800 text-gray-300 rounded text-[9px] font-bold uppercase tracking-wider cursor-pointer"
+          >
+            Unlink
+          </button>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Step 1: Upload Photo */}
+        {/* Step 1: Upload Photo / Video (up to 5 photos or 1 video) */}
         <div>
           <label className="block text-[10px] font-mono uppercase tracking-wider text-gray-400 mb-1.5">
-            STEP 1: SNAP & UPLOAD CIVIC PROOF (OPTIONAL)
+            STEP 1: SNAP & UPLOAD EVIDENCE (UP TO 5 PHOTOS OR 1 VIDEO)
           </label>
           
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,video/*"
+            multiple
             onChange={handleFileChange}
             className="hidden"
             id="report-photo-input"
           />
 
-          {photoUrl ? (
-            <div className="relative w-full h-40 rounded-lg overflow-hidden border border-brand/30 shadow-md shadow-brand/10 group">
-              <img
-                src={photoUrl}
-                alt="Civic upload"
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
-              <button
-                type="button"
-                onClick={() => setPhotoUrl("")}
-                className="absolute top-2 right-2 px-2 py-1 bg-red-600 text-white rounded text-[9px] font-bold uppercase tracking-wider shadow-md opacity-80 hover:opacity-100 cursor-pointer"
-                id="clear-photo-btn"
-              >
-                Remove
-              </button>
-              {useAI && (
-                <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2.5 py-1 bg-brand text-[#0A0A0A] rounded-full text-[9px] font-black shadow-lg">
-                  <Sparkles className="w-3 h-3 text-[#0A0A0A] animate-spin" />
-                  AI Analyzer Armed
-                </div>
-              )}
-            </div>
-          ) : (
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full h-24 border border-dashed border-gray-800 rounded-lg flex flex-col items-center justify-center bg-[#0A0A0A] hover:border-brand/50 cursor-pointer transition-all gap-1 text-gray-400"
-              id="upload-placeholder-box"
-            >
-              <Camera className="w-6 h-6 text-gray-500 hover:text-brand transition-all" />
-              <span className="text-xs font-semibold">Upload Photo / Take Picture</span>
-              <span className="text-[9px] text-gray-600 font-mono">JPG, PNG up to 8MB</span>
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full h-24 border border-dashed border-gray-800 rounded-lg flex flex-col items-center justify-center bg-[#0A0A0A] hover:border-brand/50 cursor-pointer transition-all gap-1 text-gray-400"
+            id="upload-placeholder-box"
+          >
+            <Camera className="w-6 h-6 text-gray-500 hover:text-brand transition-all" />
+            <span className="text-xs font-semibold">Upload Photos or Video / Capture</span>
+            <span className="text-[9px] text-gray-600 font-mono">Max 5 Photos or 1 Video clip (Max 25MB video, 8MB photo)</span>
+          </div>
+
+          {/* Horizontal scrollable thumbnail row */}
+          {mediaUrls.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto py-2.5 mt-2 scrollbar-thin">
+              {mediaUrls.map((url, idx) => {
+                const isUrlVideo = mediaType === "video" || url.startsWith("data:video/");
+                return (
+                  <div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-800 shrink-0 bg-black/40 group">
+                    {isUrlVideo ? (
+                      <video src={url} className="w-full h-full object-cover" />
+                    ) : (
+                      <img src={url} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMediaUrls(prev => {
+                          const updated = prev.filter((_, i) => i !== idx);
+                          if (updated.length > 0) {
+                            setPhotoUrl(updated[0]);
+                          } else {
+                            setPhotoUrl("");
+                          }
+                          return updated;
+                        });
+                      }}
+                      className="absolute top-0.5 right-0.5 w-4 h-4 bg-red-600 hover:bg-red-700 text-white rounded-full flex items-center justify-center text-[8px] font-bold cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                    <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[7px] text-center font-mono py-0.5">
+                      {isUrlVideo ? "VIDEO" : `IMG ${idx+1}`}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
 
-        {/* Step 2: Description */}
-        <div>
-          <label className="block text-[10px] font-mono uppercase tracking-wider text-gray-400 mb-1.5">
-            STEP 2: DETAILED CIVIC DESCRIPTION
+        {/* Step 2: SELECT CATEGORY */}
+        <div className="space-y-1.5" id="manual-category-section">
+          <label className="block text-[10px] font-mono uppercase tracking-wider text-gray-400 mb-1">
+            STEP 2: SELECT CATEGORY
           </label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={3}
-            placeholder="Tell your story. What did you see, hear, or experience? Be the reporter."
-            className="w-full px-3 py-2 text-xs bg-[#0A0A0A] border border-gray-900 rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-brand/60 font-sans resize-none"
-            id="report-desc-textarea"
-          />
+          
+          <div className="flex gap-1.5 overflow-x-auto py-1.5 scrollbar-thin">
+            {CATEGORY_ITEMS.map((item) => (
+              <button
+                type="button"
+                key={item.value}
+                onClick={() => {
+                  setCategory(item.value);
+                }}
+                className={`px-3 py-1.5 rounded-full border text-xs font-semibold shrink-0 transition-all cursor-pointer flex items-center gap-1.5 ${
+                  category === item.value
+                    ? "bg-brand text-[#0A0A0A] border-brand font-black"
+                    : "bg-[#141414] text-gray-400 border-gray-800 hover:border-gray-700 hover:text-white"
+                }`}
+                id={`manual-cat-${item.value}`}
+              >
+                <span>{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* AI Auto-categorize switch */}
@@ -305,7 +410,6 @@ export default function ReportForm({
             type="button"
             onClick={() => {
               setUseAI(!useAI);
-              if (!useAI) setCategory(""); // Clear standard category if switching to AI
             }}
             className={`w-10 h-6 rounded-full p-0.5 transition-colors cursor-pointer ${useAI ? "bg-brand" : "bg-gray-800"}`}
             id="ai-categorize-toggle"
@@ -314,48 +418,25 @@ export default function ReportForm({
           </button>
         </div>
 
-        {/* Step 3: Category Picker (if AI is disabled) */}
-        <AnimatePresence>
-          {!useAI && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden"
-              id="manual-category-section"
-            >
-              <label className="block text-[10px] font-mono uppercase tracking-wider text-gray-400 mb-1.5">
-                SELECT CATEGORY MANUALLY
-              </label>
-              <div className="grid grid-cols-1 gap-1.5 max-h-40 overflow-y-auto pr-1">
-                {CATEGORY_ITEMS.map((item) => (
-                  <div
-                    key={item.value}
-                    onClick={() => setCategory(item.value)}
-                    className={`flex items-center justify-between p-2 border rounded-lg cursor-pointer transition-all ${item.color} ${
-                      category === item.value ? "border-brand text-white font-bold" : "text-gray-400"
-                    }`}
-                    id={`manual-cat-${item.value}`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">{item.icon}</span>
-                      <div>
-                        <p className="text-xs">{item.label}</p>
-                        <p className="text-[9px] text-gray-500">{item.desc}</p>
-                      </div>
-                    </div>
-                    {category === item.value && <Check className="w-4 h-4 text-brand" />}
-                  </div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* Step 3: Description */}
+        <div>
+          <label className="block text-[10px] font-mono uppercase tracking-wider text-gray-400 mb-1.5">
+            STEP 3: DETAILED CIVIC DESCRIPTION
+          </label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            placeholder="Tell your story. What did you see, hear, or experience? Be the reporter."
+            className="w-full px-3 py-2 text-xs bg-[#0A0A0A] border border-gray-900 rounded-lg text-white placeholder-gray-600 focus:outline-none focus:border-brand/60 font-sans resize-none"
+            id="report-desc-textarea"
+          />
+        </div>
 
         {/* Step 4: Coordinates Location selection */}
         <div>
           <label className="block text-[10px] font-mono uppercase tracking-wider text-gray-400 mb-1">
-            STEP 3: REPORT LOCATION & AREA
+            STEP 4: REPORT LOCATION & AREA
           </label>
           
           <div className="flex flex-col gap-2">
@@ -475,7 +556,7 @@ export default function ReportForm({
               </>
             ) : (
               <>
-                <span>BROADCAST CIVIC OUTRAGE</span>
+                <span>POST TO GROUNDZERO</span>
               </>
             )}
           </button>

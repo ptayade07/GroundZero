@@ -10,10 +10,13 @@ import { motion } from "motion/react";
 
 interface IssuePopupProps {
   issue: Issue;
+  allIssues?: Issue[];
   currentUserId: string;
   onClose: () => void;
   onReact: (issueId: string, reaction: ReactionType) => void;
   onUpdateStatus?: (issueId: string, newStatus: Status) => void;
+  onAddPerspective?: (parentIssueId: string) => void;
+  onSelectPerspective?: (issue: Issue) => void;
 }
 
 const CATEGORY_STYLES: Record<Category, { label: string; emoji: string; bg: string; text: string; border: string }> = {
@@ -44,12 +47,28 @@ const STATUS_DETAILS: Record<Status, { label: string; colorClass: string; icon: 
 
 export default function IssuePopup({
   issue,
+  allIssues = [],
   currentUserId,
   onClose,
   onReact,
-  onUpdateStatus
+  onUpdateStatus,
+  onAddPerspective,
+  onSelectPerspective
 }: IssuePopupProps) {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+
+  // Compute media and parent-perspective linkings
+  const mediaUrls = issue.mediaUrls || (issue.photoUrl ? [issue.photoUrl] : []);
+  const activeMediaUrl = mediaUrls[activeMediaIndex] || "";
+  const isVideo = issue.mediaType === "video" || activeMediaUrl.startsWith("data:video/");
+
+  const parentId = issue.parentIssueId || issue.id;
+  // Sibling perspectives include the parent and any children who link to this parent
+  const siblingPerspectives = allIssues.filter(
+    i => i.id === parentId || i.parentIssueId === parentId
+  );
+  const reporterCount = siblingPerspectives.length || 1;
 
   const getTrustBadge = (score: number) => {
     if (score >= 90) return { label: "Ground Zero Reporter", color: "text-brand border-brand/50 bg-brand/10" };
@@ -130,28 +149,96 @@ export default function IssuePopup({
         </button>
       </div>
 
-      {/* Photo and description */}
-      <div className="grid grid-cols-1 gap-3 mb-3">
-        {issue.photoUrl && (
-          <div className="w-full h-36 rounded-xl overflow-hidden border border-gray-900 bg-black/40 relative">
-            <img
-              src={issue.photoUrl}
-              alt={issue.title}
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
+      {/* Photo / Video Gallery and Description */}
+      <div className="grid grid-cols-1 gap-2 mb-3">
+        {activeMediaUrl && (
+          <div className="w-full h-44 rounded-xl overflow-hidden border border-gray-900 bg-black/40 relative">
+            {isVideo ? (
+              <video
+                src={activeMediaUrl}
+                controls
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <img
+                src={activeMediaUrl}
+                alt={issue.title}
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            )}
+            
             {/* AI verification seal badge if high confidence */}
             {issue.status !== "Reported" && (
-              <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 bg-brand text-[#0A0A0A] rounded-full text-[8px] font-black uppercase shadow-lg">
+              <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 bg-brand text-[#0A0A0A] rounded-full text-[8px] font-black uppercase shadow-lg z-10">
                 <Sparkles className="w-2.5 h-2.5" />
                 VERIFIED SOURCE
               </div>
             )}
           </div>
         )}
-        <p className="text-xs text-gray-300 leading-relaxed font-sans font-normal">
+
+        {/* Thumbnail row if multiple files exist */}
+        {mediaUrls.length > 1 && (
+          <div className="flex gap-1.5 overflow-x-auto py-1 scrollbar-thin">
+            {mediaUrls.map((url, idx) => {
+              const isUrlVideo = issue.mediaType === "video" || url.startsWith("data:video/");
+              return (
+                <button
+                  key={idx}
+                  onClick={() => setActiveMediaIndex(idx)}
+                  className={`w-12 h-12 rounded-lg border-2 overflow-hidden shrink-0 transition-all cursor-pointer ${
+                    activeMediaIndex === idx ? "border-brand" : "border-gray-800 opacity-65 hover:opacity-100"
+                  }`}
+                >
+                  {isUrlVideo ? (
+                    <div className="w-full h-full bg-slate-950 flex items-center justify-center text-xs">📹</div>
+                  ) : (
+                    <img src={url} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <p className="text-xs text-gray-300 leading-relaxed font-sans font-normal mt-1">
           {issue.description}
         </p>
+      </div>
+
+      {/* Grouped Perspectives Block */}
+      <div className="mb-3 p-3 bg-zinc-950/80 border border-gray-900 rounded-xl">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-bold text-brand uppercase tracking-wider font-mono">
+            📢 {reporterCount} {reporterCount === 1 ? 'person reported this' : 'people reported this'}
+          </span>
+        </div>
+        
+        {siblingPerspectives.length > 1 && (
+          <div className="space-y-1.5 mt-2 max-h-32 overflow-y-auto pr-1">
+            <p className="text-[8px] text-gray-500 uppercase tracking-wider font-mono">Select a perspective to view:</p>
+            {siblingPerspectives.map((sib) => (
+              <button
+                key={sib.id}
+                onClick={() => onSelectPerspective?.(sib)}
+                className={`w-full p-2 rounded-lg border text-left transition-all flex flex-col cursor-pointer ${
+                  sib.id === issue.id
+                    ? "bg-brand/10 border-brand/35 text-white"
+                    : "bg-[#0A0A0A] border-gray-800/80 text-gray-400 hover:border-gray-700 hover:text-gray-200"
+                }`}
+              >
+                <div className="flex justify-between items-center text-[9px] w-full font-semibold">
+                  <span>{sib.isAnonymous ? "Anonymous Citizen" : sib.reporterName}</span>
+                  <span className="text-[8px] text-gray-500 font-mono font-normal">{timeAgo(sib.createdAt)}</span>
+                </div>
+                <p className="text-[10px] line-clamp-1 leading-snug mt-0.5">
+                  {sib.description}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Gemini Vision AI analysis explanation box */}
@@ -310,6 +397,17 @@ export default function IssuePopup({
           </button>
         </div>
       </div>
+
+      {/* Add Another Angle Button */}
+      {onAddPerspective && (
+        <button
+          onClick={() => onAddPerspective(parentId)}
+          className="w-full mt-3 py-2 bg-gradient-to-r from-brand to-brand/85 hover:from-brand/90 hover:to-brand/75 text-[#0A0A0A] font-black uppercase text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+          id="add-angle-btn"
+        >
+          <span>📸 Add Another Angle / Perspective</span>
+        </button>
+      )}
 
       {/* Admin Demo Simulation Controls */}
       {onUpdateStatus && (

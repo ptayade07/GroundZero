@@ -65,6 +65,8 @@ export default function MapComponent({
 }: MapComponentProps) {
   const [viewMode, setViewMode] = useState<"street" | "satellite">("street");
   const [leafletLoaded, setLeafletLoaded] = useState(false);
+  const [mapZoom, setMapZoom] = useState<number>(5);
+  const [isLegendOpen, setIsLegendOpen] = useState(false);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<any>(null);
@@ -126,6 +128,12 @@ export default function MapComponent({
         zoom: zoom,
         zoomControl: false,
         attributionControl: true
+      });
+
+      setMapZoom(zoom);
+
+      map.on("zoomend", () => {
+        setMapZoom(map.getZoom());
       });
 
       // Add Zoom Control at bottom right
@@ -239,50 +247,137 @@ export default function MapComponent({
         .addTo(markersGroupRef.current);
     }
 
-    // 2. Drop category color-coded issue pins with pulse animations
+    // Custom tuned threshold mapping based on mapZoom
+    const getThreshold = (zoom: number) => {
+      if (zoom <= 4) return 2.5;
+      if (zoom === 5) return 1.5;
+      if (zoom === 6) return 0.8;
+      if (zoom === 7) return 0.4;
+      if (zoom === 8) return 0.2;
+      if (zoom === 9) return 0.1;
+      if (zoom === 10) return 0.05;
+      if (zoom === 11) return 0.025;
+      if (zoom === 12) return 0.012;
+      if (zoom === 13) return 0.006;
+      if (zoom === 14) return 0.003;
+      if (zoom === 15) return 0.0015;
+      if (zoom === 16) return 0.0008;
+      if (zoom === 17) return 0.0004;
+      return 0.0002;
+    };
+
+    const threshold = getThreshold(mapZoom);
+    const tempClusters: {
+      lat: number;
+      lng: number;
+      issues: Issue[];
+    }[] = [];
+
+    // Simple agglomerative clustering
     issues.forEach(issue => {
-      const color = CATEGORY_COLORS[issue.category]?.hex || "#39FF14";
-      const isSelected = selectedIssue?.id === issue.id;
+      let found = false;
+      for (const c of tempClusters) {
+        const dist = Math.sqrt(Math.pow(c.lat - issue.lat, 2) + Math.pow(c.lng - issue.lng, 2));
+        if (dist < threshold) {
+          c.issues.push(issue);
+          c.lat = c.issues.reduce((sum, i) => sum + i.lat, 0) / c.issues.length;
+          c.lng = c.issues.reduce((sum, i) => sum + i.lng, 0) / c.issues.length;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        tempClusters.push({
+          lat: issue.lat,
+          lng: issue.lng,
+          issues: [issue]
+        });
+      }
+    });
 
-      const emoji = CATEGORY_EMOJIS[issue.category] || "📍";
-
-      // Elegant pulse concentric rings using animate-ping + animate-pulse to grab attention
-      const size = isSelected ? "w-8 h-8 text-base" : "w-7.5 h-7.5 text-sm";
-      const pingSize = isSelected ? "h-11 w-11" : "h-9 w-9";
-
-      const pinHtml = `
-        <div class="relative flex items-center justify-center">
-          <span class="animate-ping absolute inline-flex ${pingSize} rounded-full" style="background-color: ${color}; opacity: 0.35;"></span>
-          <div class="relative flex items-center justify-center ${size} rounded-full bg-[#0A0A0A] shadow-[0_0_12px_rgba(0,0,0,0.6)] border-2 transition-all duration-300" style="border-color: ${color};">
-            <span class="select-none leading-none">${emoji}</span>
+    // Now plot items: either cluster bubble (>= 3) or individual pins (< 3)
+    tempClusters.forEach(c => {
+      if (c.issues.length >= 3) {
+        // Render as a high-visibility green cluster circle showing count
+        const clusterHtml = `
+          <div class="relative flex items-center justify-center">
+            <span class="animate-ping absolute inline-flex h-10 w-10 rounded-full bg-emerald-500 opacity-30"></span>
+            <div class="relative flex items-center justify-center w-9 h-9 rounded-full bg-[#0A0A0A] border-2 border-[#39FF14] text-[#39FF14] font-black text-xs shadow-[0_0_15px_rgba(57,255,20,0.5)] transition-all transform hover:scale-110">
+              ${c.issues.length}
+            </div>
           </div>
-        </div>
-      `;
+        `;
+        const clusterIcon = L.divIcon({
+          html: clusterHtml,
+          className: "custom-leaflet-icon-cluster",
+          iconSize: [40, 40],
+          iconAnchor: [20, 20]
+        });
 
-      const customIcon = L.divIcon({
-        html: pinHtml,
-        className: "custom-leaflet-icon-pin",
-        iconSize: isSelected ? [36, 36] : [30, 30],
-        iconAnchor: isSelected ? [18, 18] : [15, 15]
-      });
+        const marker = L.marker([c.lat, c.lng], { icon: clusterIcon });
+        marker.on("click", () => {
+          const currentZoom = mapInstance.current.getZoom();
+          mapInstance.current.setView([c.lat, c.lng], Math.min(currentZoom + 2, 18), { animate: true });
+        });
 
-      const marker = L.marker([issue.lat, issue.lng], { icon: customIcon });
+        // Add small hover popup showing titles inside the cluster
+        const titleSnippet = c.issues.slice(0, 3).map(i => `• ${i.title}`).join("<br/>") + (c.issues.length > 3 ? `<br/>...and ${c.issues.length - 3} more` : "");
+        marker.bindPopup(`
+          <div class="text-[#0A0A0A] font-sans p-1 max-w-[180px]">
+            <h4 class="font-bold text-xs leading-snug">Incident Cluster (${c.issues.length} reports)</h4>
+            <div class="text-[9px] text-gray-600 mt-1.5 leading-normal">
+              ${titleSnippet}
+            </div>
+            <p class="text-[8px] text-brand/80 font-mono mt-1 uppercase font-bold">Tap to zoom in</p>
+          </div>
+        `);
 
-      marker.on("click", () => {
-        onSelectIssue(issue);
-      });
+        markersGroupRef.current.addLayer(marker);
+      } else {
+        // Render each issue inside as a normal individual pin
+        c.issues.forEach(issue => {
+          const color = CATEGORY_COLORS[issue.category]?.hex || "#39FF14";
+          const isSelected = selectedIssue?.id === issue.id;
+          const emoji = CATEGORY_EMOJIS[issue.category] || "📍";
 
-      marker.bindPopup(`
-        <div class="text-[#0A0A0A] font-sans p-1 max-w-[180px]">
-          <h4 class="font-bold text-xs leading-snug line-clamp-2">${issue.title}</h4>
-          <p class="text-[9px] text-gray-500 uppercase font-black tracking-wider mt-1" style="color: ${color};">
-            ${issue.category}
-          </p>
-          <p class="text-[8px] text-gray-400 mt-0.5">${issue.area}</p>
-        </div>
-      `);
+          const size = isSelected ? "w-8 h-8 text-base" : "w-7.5 h-7.5 text-sm";
+          const pingSize = isSelected ? "h-11 w-11" : "h-9 w-9";
 
-      markersGroupRef.current.addLayer(marker);
+          const pinHtml = `
+            <div class="relative flex items-center justify-center">
+              <span class="animate-ping absolute inline-flex ${pingSize} rounded-full" style="background-color: ${color}; opacity: 0.35;"></span>
+              <div class="relative flex items-center justify-center ${size} rounded-full bg-[#0A0A0A] shadow-[0_0_12px_rgba(0,0,0,0.6)] border-2 transition-all duration-300" style="border-color: ${color};">
+                <span class="select-none leading-none">${emoji}</span>
+              </div>
+            </div>
+          `;
+
+          const customIcon = L.divIcon({
+            html: pinHtml,
+            className: "custom-leaflet-icon-pin",
+            iconSize: isSelected ? [36, 36] : [30, 30],
+            iconAnchor: isSelected ? [18, 18] : [15, 15]
+          });
+
+          const marker = L.marker([issue.lat, issue.lng], { icon: customIcon });
+
+          marker.on("click", () => {
+            onSelectIssue(issue);
+          });
+
+          marker.bindPopup(`
+            <div class="text-[#0A0A0A] font-sans p-1 max-w-[180px]">
+              <h4 class="font-bold text-xs leading-snug line-clamp-2">${issue.title}</h4>
+              <p class="text-[9px] text-gray-500 uppercase font-black tracking-wider mt-1" style="color: ${color};">
+                ${issue.category}
+              </p>
+              <p class="text-[8px] text-gray-400 mt-0.5">${issue.area}</p>
+            </div>
+          `);
+
+          markersGroupRef.current.addLayer(marker);
+        });
+      }
     });
 
     // 3. Drop bouncing pin for the active user selection state
@@ -307,7 +402,7 @@ export default function MapComponent({
         .addTo(markersGroupRef.current);
     }
 
-  }, [leafletLoaded, issues, selectedIssue, isSelectingLocationMode, selectedLocation, mapCenter, hasGPS]);
+  }, [leafletLoaded, issues, selectedIssue, isSelectingLocationMode, selectedLocation, mapCenter, hasGPS, mapZoom]);
 
   // Closest Area fallback computation helper
   const getClosestAreaName = (lat: number, lng: number): string => {
@@ -399,17 +494,38 @@ export default function MapComponent({
         <div ref={mapContainerRef} className="w-full h-full z-10" />
       </div>
 
-      {/* Elegant Compass / Legend Footer */}
-      <div className="absolute bottom-4 left-4 z-[1000] flex flex-col gap-1.5 p-2 bg-[#0A0A0A]/95 border border-gray-900 rounded-lg text-[9px] text-gray-400 backdrop-blur" id="map-legend">
-        <p className="font-bold text-gray-300 font-sans tracking-wide pb-1 border-b border-gray-800">RADAR LEGEND</p>
-        <div className="flex flex-col gap-1 font-mono max-h-36 overflow-y-auto pr-1 scrollbar-thin">
-          {(Object.keys(CATEGORY_COLORS) as Category[]).map(cat => (
-            <div key={cat} className="flex items-center gap-1.5 text-[8.5px]">
-              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: CATEGORY_COLORS[cat].hex }} />
-              <span className="truncate">{CATEGORY_EMOJIS[cat]} {cat}</span>
+      {/* Elegant Compass / Legend Footer (Floating and Collapsible) */}
+      <div className="absolute bottom-4 left-4 z-[1000] flex flex-col items-start gap-1.5" id="map-legend-container">
+        {isLegendOpen ? (
+          <div className="flex flex-col gap-1.5 p-2.5 bg-[#0A0A0A]/95 border border-gray-900 rounded-lg text-[9px] text-gray-400 backdrop-blur min-w-[145px] shadow-2xl">
+            <div className="flex items-center justify-between w-full pb-1 border-b border-gray-800 gap-4">
+              <p className="font-bold text-gray-300 font-sans tracking-wide">RADAR LEGEND</p>
+              <button 
+                onClick={() => setIsLegendOpen(false)}
+                className="text-gray-500 hover:text-white text-[9px] cursor-pointer"
+              >
+                ✕
+              </button>
             </div>
-          ))}
-        </div>
+            <div className="flex flex-col gap-1 font-mono max-h-36 overflow-y-auto pr-1 scrollbar-thin w-full">
+              {(Object.keys(CATEGORY_COLORS) as Category[]).map(cat => (
+                <div key={cat} className="flex items-center gap-1.5 text-[8.5px]">
+                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: CATEGORY_COLORS[cat].hex }} />
+                  <span className="truncate">{CATEGORY_EMOJIS[cat]} {cat}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setIsLegendOpen(true)}
+            className="w-8 h-8 rounded-lg bg-[#0A0A0A]/95 border border-gray-900 flex items-center justify-center text-gray-400 hover:text-[#39FF14] hover:border-[#39FF14]/30 shadow-lg backdrop-blur cursor-pointer transition-all"
+            title="Show Radar Legend"
+            id="toggle-legend-btn"
+          >
+            <Layers className="w-4 h-4" />
+          </button>
+        )}
       </div>
     </div>
   );
